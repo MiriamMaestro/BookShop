@@ -1,133 +1,200 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
 using Xunit;
 using System.Linq;
+using Dapper;
+using Microsoft.Data.Sqlite;
 
 namespace BookShop
 {
     public class UnitTest1
     {
+
         [Fact]
-        public void rent4booksIsForbidden()
+        public void IfLessThan4BookAndBookUnavailable()
         {
             var library = new Library();
-            library.CanBookABook("Miriam", "Harry Potter 1");
-            library.CanBookABook("Miriam", "Harry Potter 2");
-            library.CanBookABook("Miriam", "Harry Potter 3");
-            var result = library.CanBookABook("Miriam", "Harry Potter 4");
+            var result = library.BookaBook("Rob", "Harry Potter 1");
             Assert.False(result);
+
         }
         [Fact]
-        public void rent2PersonTheSameBooksIsForbidden()
+        public void IfLessThan4BookAndBookAvailable()
         {
             var library = new Library();
-            library.CanBookABook("Miriam", "Harry Potter 1");
-            var result = library.CanBookABook("Rob", "Harry Potter 4");
+            var result = library.BookaBook("Mike", "Harry Potter 6");
             Assert.True(result);
+
         }
         [Fact]
-        public void test()
+        public void useIdr()
         {
             var library = new Library();
-            library.CanBookABook("Mike", "Harry Potter 5");
-            library.CanBookABook("Mike", "Harry Potter 2");
-            library.CanBookABook("Mike", "Harry Potter 3");
-            var result1=library.CanBookABook("Mike", "Harry Potter 3");
-            Assert.False(result1);
-            var result = library.CanBookABook("Rob", "Harry Potter 4");
-            Assert.True(result);
+            var result = library.BookaBook("Rob", "Harry Potter 1");
+            Assert.False(result);
+
+        }
+        [Fact]
+        public void user()
+        {
+            var library = new Library();
+            library.GetUser(2);
+
         }
 
     }
 
     public class Library
     {
+        private User user;
+        private Book book;
 
-        public Dictionary<int, BookList> BookHistory = new()
-        {
-            { 1, new BookList() { Name = "Harry Potter 1", Available = true, User= null}},
-            { 2, new BookList() { Name = "Harry Potter 2", Available = true, User = null}},
-            { 3, new BookList() { Name = "Harry Potter 3", Available = true, User = null}},
-            { 4, new BookList() { Name = "Harry Potter 4", Available = true, User = null}},
-            { 5, new BookList() { Name = "Harry Potter 5", Available = true, User = null}}
-        };
 
-        public Dictionary<int, PersonDescription> UserHistory = new ()
-        {
-            {1, new PersonDescription(){ Name = "Miriam", NumberBook =0}},
-            {2, new PersonDescription(){ Name = "Mike", NumberBook  = 2}},
-            {3, new PersonDescription(){ Name = "Rob", NumberBook = 1}},
-        };
+        private int userId { get; set; }
 
-        private static int KeyUser { get; set; }
-        public static int KeyBook { get; private set; }
+        
+        public bool BookaBook( string name, string bookName)
+        { 
+            userId = ReadUserId(name);
+            User user = GetUser(userId);
+            Book book = GetBook(bookName);
 
-        private bool _bookAvailable;
-
-        public bool CanBookABook(string name, string book)
-        {
-            
-            GetUserId(name);
-            if (!CheckIfUserHasLessThan4Books() || !CheckIfBookIsAvailable(book)) return false;
-            AddUserAndUpdateAvailability();
-            AddUserNumberBooks();
+            if (!CheckIfUserHasLessThan4Books(user) 
+                || !CheckIfBookIsAvailable(book)) return false;
+            AddUser(user, book);
+            AddUserNumberBooks(user);
             return true;
         }
 
-        private void AddUserNumberBooks()
+        private void AddUserNumberBooks(User user)
         {
-            UserHistory[KeyUser].NumberBook += 1;
-        }
-
-        private void AddUserAndUpdateAvailability()
-        {
-            BookHistory[KeyBook].User = KeyUser;
-            BookHistory[KeyBook].Available = false;
-        }
-
-        private bool CheckIfBookIsAvailable(string book)
-        {
-            foreach (var (key, _) in BookHistory)
+            using (var con = new SqliteConnection("Data Source=Library.sqlite"))
             {
+                con.Open();
+                var command = con.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM BookLibrary WHERE User = @User";
+                command.Parameters.AddWithValue("@User", user.Name);
+                var totalBooks = command.ExecuteScalar();
+                con.Open();
+                var comm = con.CreateCommand();
+                comm.CommandText = "UPDATE UserList SET numberBook = @NumberBook WHERE UserName = @UserName";
+                comm.Parameters.AddWithValue("@UserName", user.Name);
+                comm.Parameters.AddWithValue("@NumberBook", totalBooks);
+                comm.ExecuteScalar();
+            }
+        }
+
+        private void AddUser(User user, Book book)
+        {
+            using (var con = new SqliteConnection("Data Source=Library.sqlite"))
+            {
+                con.Open();
+                var command = con.CreateCommand();
+                command.CommandText = "UPDATE BookLibrary SET User = @User WHERE BookId = @BookId";
+                command.Parameters.AddWithValue("@User", user.Name);
+                command.Parameters.AddWithValue("@BookId", book.BookId);
+                command.ExecuteScalar();
                 
-                if (BookHistory[key].Name != book || !BookHistory[key].Available) continue;
-                _bookAvailable = false;
-                KeyBook = key;
-                _bookAvailable = true;
-                break;
 
             }
-
-            return _bookAvailable;
         }
 
-        private bool CheckIfUserHasLessThan4Books()
+        private Book GetBook(string bookName)
         {
-            return UserHistory[KeyUser].NumberBook < 3;
-        }
-
-        public int GetUserId(string name)
-        {
-            foreach (var userId in UserHistory
-                .Where(userId => UserHistory[userId.Key].Name == name))
+            Book book = null;
+            using (var con = new SqliteConnection("Data Source=Library.sqlite"))
             {
-                KeyUser = userId.Key;
+                con.Open();
+
+                string stm = "SELECT * From BookLibrary Where Name= @Name";
+
+                using (SqliteCommand cmd = new SqliteCommand(stm, con))
+                {
+                    cmd.Parameters.AddWithValue("@Name", bookName);
+                    using (SqliteDataReader rdr = cmd.ExecuteReader())
+                    {
+                        while (rdr.Read())
+                        {
+                            //add items to your list
+                            int BookId = (int)(long)rdr["BookId"];
+                            string Name = (string)rdr["Name"];
+                            var User = Convert.IsDBNull(rdr["User"])?String.Empty : (string)rdr["User"];
+                            book = new Book() { BookId = BookId, Name = Name, User = User};
+                        }
+                    }
+                }
+                con.Close();
+
             }
-            return KeyUser;
+            return book;
+        }
+
+        private bool CheckIfBookIsAvailable(Book book)
+        {
+            if (string.IsNullOrEmpty(book.User)) return true;
+            return false;
+        }
+
+        private bool CheckIfUserHasLessThan4Books(User user)
+        {
+            return user.NumberBook < 3;
+        }
+
+        public static int ReadUserId( string name)
+        {
+            using (var connection = new SqliteConnection("Data Source=Library.sqlite"))
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+                command.CommandText = "SELECT Id From UserList where UserName = @name";
+                command.Parameters.AddWithValue("@name", name);
+                return (int)(long)command.ExecuteScalar();
+            }
+        }
+        public User GetUser(int groupID)
+        {
+            User user = null;
+            using (var con = new SqliteConnection("Data Source=Library.sqlite"))
+            {
+                con.Open();
+
+                string stm = "SELECT * From UserList Where Id= @Id";
+
+                using (SqliteCommand cmd = new SqliteCommand(stm, con))
+                {
+                    cmd.Parameters.AddWithValue("@Id", groupID);
+                    using (SqliteDataReader rdr = cmd.ExecuteReader())
+                    {
+                        while (rdr.Read())
+                        {
+                            //add items to your list
+                            int UserId = (int)(long)rdr["Id"];
+                            string UserName = (string) rdr["UserName"];
+                            int NumberBook = (int)(long)rdr["numberBook"];
+                            user = new User(){UserId=UserId,Name= UserName, NumberBook = NumberBook};
+                        }
+                    }
+
+                } con.Close();
+
+            }
+            return user;
         }
 
     }
 
-    public class PersonDescription
+    public class User
     {
+        public int UserId { get; set; }
         public string Name { get; set; }
         public int NumberBook { get; set; }
     }
-
-    public class BookList
+    public class Book
     {
+        public int BookId { get; set; }
         public string Name { get; set; }
-        public bool Available { get; set; }
-        public object User { get; set; }
+        public string? User { get; set; }
     }
 }
